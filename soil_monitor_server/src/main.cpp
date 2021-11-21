@@ -1,40 +1,77 @@
 #include <Arduino.h>
-
-/*
-    Based on Neil Kolban example for IDF: https://github.com/nkolban/esp32-snippets/blob/master/cpp_utils/tests/BLE%20Tests/SampleServer.cpp
-    Ported to Arduino ESP32 by Evandro Copercini
-    updates by chegewara
-*/
-
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
+#include <SPI.h>
 
-// See the following for generating UUIDs:
-// https://www.uuidgenerator.net/
+#include "Adafruit_seesaw.h"
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define CAPACITANCE_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define TEMPERATURE_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
-static BLECharacteristic * pCharacteristic;
+Adafruit_seesaw ss;
+
+BLEServer* pServer = NULL;
+BLECharacteristic* pCapCharacteristic = NULL;
+BLECharacteristic* pTempCharacteristic = NULL;
+
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+uint32_t value = 0;
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+    }
+};
 
 void setup() {
+  // Start Serial Monitor
   Serial.begin(115200);
-  Serial.println("Starting BLE work!");
+  Serial.println("Starting BLE Soil Server!");
 
-  BLEDevice::init("Long name works now");
-  BLEServer *pServer = BLEDevice::createServer();
+  // Initialize adafruit seesaw
+  if (!ss.begin(0x36)) {
+    Serial.println("ERROR! seesaw not found");
+    while(1);
+  } else {
+    Serial.print("seesaw started! version: ");
+    Serial.println(ss.getVersion(), HEX);
+  }
+
+  // Create the BLE Device
+  BLEDevice::init("Soil Sensor 1");
+
+  // Create the BLE Server
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  
+  // Create the BLE Service
   BLEService *pService = pServer->createService(SERVICE_UUID);
-  pCharacteristic = pService->createCharacteristic(
-                                         CHARACTERISTIC_UUID,
-                                         BLECharacteristic::PROPERTY_READ |
-                                         BLECharacteristic::PROPERTY_WRITE
-                                       );
 
+  // Create Capacitance Characteristic
+  pCapCharacteristic = pService->createCharacteristic(
+                     CAPACITANCE_CHARACTERISTIC_UUID,
+                     BLECharacteristic::PROPERTY_READ |
+                     BLECharacteristic::PROPERTY_WRITE
+                   );
 
-  pCharacteristic->setValue("initializing");
+  // Create Temperature Characteristic
+  pTempCharacteristic = pService->createCharacteristic(
+                     TEMPERATURE_CHARACTERISTIC_UUID,
+                     BLECharacteristic::PROPERTY_READ |
+                     BLECharacteristic::PROPERTY_WRITE
+                   );
+
+  // Start the service
   pService->start();
-  // BLEAdvertising *pAdvertising = pServer->getAdvertising();  // this still is working for backward compatibility
+
+  //  Start Advertising
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
@@ -45,21 +82,31 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  String strCharVal;
-  uint8_t data[32]; 
-  unsigned long ulUpTime;
-  // strCharVal = (millis()/1000);
+  // Read Soil Capacitance and Temperature
+  float tempC = ss.getTemp();
+  float tempF = (tempC * 9/5) + 32;
+  uint16_t capread = ss.touchRead(0);
 
-  // strCharVal.getBytes( &data[0], sizeof( data ), 0 );
-  // pCharacteristic->setValue(millis()/1000);
-
-  uint16_t u16SensorVal;
-
-  for( u16SensorVal = 0; u16SensorVal < 65535; u16SensorVal++ )
-  {
-    pCharacteristic->setValue(u16SensorVal);
-    delay(1000);
+  // Set characteristic data every 1 second
+  if (deviceConnected) {
+      pCapCharacteristic->setValue(capread);
+      Serial.print("Capacitive: "); Serial.println(capread);
+      pTempCharacteristic->setValue(tempF);
+      Serial.print("Temperature: "); Serial.print(tempF); Serial.println("*F");
+      delay(1000);
   }
-
+  // disconnecting
+  if (!deviceConnected && oldDeviceConnected) {
+      delay(500); // give the bluetooth stack the chance to get things ready
+      pServer->startAdvertising(); // restart advertising
+      Serial.println("start advertising");
+      oldDeviceConnected = deviceConnected;
+  }
+  // connecting
+  if (deviceConnected && !oldDeviceConnected) {
+      // do stuff here on connecting
+      oldDeviceConnected = deviceConnected;
+  }
+  
+  delay(100);
 }
