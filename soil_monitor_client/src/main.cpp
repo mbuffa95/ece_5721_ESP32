@@ -17,18 +17,41 @@
 #define FRDM_SERIAL_MODE ( SERIAL_8N1 )
 #define FRDM_SERIAL_BAUD ( 4800 )
 
+typedef enum eSensorValueType
+{
+  eSENSOR_VALUE_CAPACITANCE,
+  eSENSOR_VALUE_TEMPERATURE,
+
+  // new sensor value types above this line
+  eSENSOR_VALUE_COUNT,
+}eSENSOR_VALUE_TYPE;
+
+typedef struct xSensorReadingPacket
+{
+  uint8_t u8SensorID;
+  eSENSOR_VALUE_TYPE eValueType;
+  union
+  {
+    uint16_t u16Capacitance;
+    int8_t s8Temperature;
+  };
+}xSENSOR_READING_PACKET;
+
+
 static HardwareSerial FRDMSerialComm(1); // use UART 2, 
 
 // The remote service we wish to connect to.
 static BLEUUID serviceUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
 // The characteristic of the remote service we are interested in.
-static BLEUUID    charUUID("beb5483e-36e1-4688-b7f5-ea07361b26a8");
+static BLEUUID capCharUUID("beb5483e-36e1-4688-b7f5-ea07361b26a8"); // capacitance
+static BLEUUID tempCharUUID("beb5483e-36e1-4688-b7f5-ea07361b26a9"); // temperature
 
 static boolean doConnect = false;
 static boolean connected = false;
 static boolean doScan = false;
 static BLEClient*  pClient;
-static BLERemoteCharacteristic* pRemoteCharacteristic;
+static BLERemoteCharacteristic* pRemoteCapCharacteristic;
+static BLERemoteCharacteristic* pRemoteTempCharacteristic;
 static BLEAdvertisedDevice* myDevice;
 
 static const char chTestString [3] = { 0xFE, 0xAF, 0x00 };
@@ -79,23 +102,39 @@ bool connectToServer() {
       pClient->disconnect();
       return false;
     }
+
     Serial.println(" - Found our service");
 
-
     // Obtain a reference to the characteristic in the service of the remote BLE server.
-    pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
-    if (pRemoteCharacteristic == nullptr) {
-      Serial.print("Failed to find our characteristic UUID: ");
-      Serial.println(charUUID.toString().c_str());
+    pRemoteCapCharacteristic = pRemoteService->getCharacteristic(capCharUUID);
+
+    if (pRemoteCapCharacteristic == nullptr) {
+      Serial.print("Failed to find capacitance characteristic UUID: ");
+      Serial.println(capCharUUID.toString().c_str());
       pClient->disconnect();
       return false;
     }
-    Serial.println(" - Found our characteristic");
-
-    if(pRemoteCharacteristic->canNotify())
+    
+    if(pRemoteCapCharacteristic->canNotify())
     {
-      pRemoteCharacteristic->registerForNotify(notifyCallback);
+      pRemoteCapCharacteristic->registerForNotify(notifyCallback);
     }
+
+    pRemoteTempCharacteristic = pRemoteService->getCharacteristic(tempCharUUID);
+
+    if (pRemoteTempCharacteristic == nullptr) {
+      Serial.print("Failed to find temperature characteristic UUID: ");
+      Serial.println(tempCharUUID.toString().c_str());
+      pClient->disconnect();
+      return false;
+    }
+    
+    if(pRemoteTempCharacteristic->canNotify())
+    {
+      pRemoteTempCharacteristic->registerForNotify(notifyCallback);
+    }
+
+    Serial.println(" - Found our characteristics");
 
     connected = true;
     return true;
@@ -145,6 +184,7 @@ void setup() {
 
 // This is the Arduino main loop function.
 void loop() {
+  uint8_t u8TxBuf[8];
 
   // If the flag "doConnect" is true then we have scanned for and found the desired
   // BLE Server with which we wish to connect.  Now we connect to it.  Once we are 
@@ -163,23 +203,31 @@ void loop() {
   if (connected) {
 
       // Read the value of the characteristic.
-    if(pRemoteCharacteristic->canRead()) {
-      std::string value = pRemoteCharacteristic->readValue();
-      Serial.print("The characteristic value was: ");
-      Serial.println(value.c_str());
+    if(pRemoteCapCharacteristic->canRead()) {
+      uint16_t u16CapValue = pRemoteCapCharacteristic->readUInt16();
+      Serial.print("The capacitance characteristic value was: ");
+      Serial.println( u16CapValue, DEC );
 
-      // read a characteristic, now disconnect so we can read from the other sensor
-      // pClient->disconnect();
+      u8TxBuf[0] = 0; // sensor number, 0 for now
+      u8TxBuf[1] = eSENSOR_VALUE_CAPACITANCE;
+      u8TxBuf[2] = ( ( u16CapValue & 0xFF00 ) >> 8 );
+      u8TxBuf[3] = ( uint8_t( u16CapValue & 0x00FF ) );
 
-      //value.c_str(), value.length
-
-      FRDMSerialComm.write( value.data(), value.length() );
-      
+      FRDMSerialComm.write( u8TxBuf, 8 );
     }
 
-    
+    if(pRemoteTempCharacteristic->canRead()) {
+      float fTempValue = pRemoteTempCharacteristic->readFloat();
+      Serial.print( "The temperature characteristic value was: " );
+      Serial.println( fTempValue );
+      
+      u8TxBuf[0] = 0; // sensor number, 0 for now
+      u8TxBuf[1] = eSENSOR_VALUE_TEMPERATURE;
+      u8TxBuf[2] = ( (int8_t)fTempValue );
 
-
+      FRDMSerialComm.write( u8TxBuf, 8 );
+      
+    }
   }else if(doScan){
     BLEDevice::getScan()->start(0);  // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
   }
