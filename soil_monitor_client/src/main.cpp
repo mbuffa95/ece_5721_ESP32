@@ -16,6 +16,11 @@
 #define FRDM_SERIAL_RX_PIN ( 16 )
 #define FRDM_SERIAL_MODE ( SERIAL_8N1 )
 #define FRDM_SERIAL_BAUD ( 4800 )
+#define MAX_NUMBER_OF_SENSORS ( 2 )
+
+#define SENSOR_TIMEOUT_S ( 5 )
+
+//#define PRINT_ALL_DEVICES
 
 typedef enum eSensorValueType
 {
@@ -53,8 +58,10 @@ static BLEClient*  pClient;
 static BLERemoteCharacteristic* pRemoteCapCharacteristic;
 static BLERemoteCharacteristic* pRemoteTempCharacteristic;
 static BLEAdvertisedDevice* myDevice;
+static const std::string strDeviceNames[2] = {"Soil Sensor 1", "Soil Sensor 2"};
+static uint8_t u8SensorIdx;
 
-static const char chTestString [3] = { 0xFE, 0xAF, 0x00 };
+static void scanCompleteCB(BLEScanResults scanResults) ;
 
 static void notifyCallback(
   BLERemoteCharacteristic* pBLERemoteCharacteristic,
@@ -76,6 +83,7 @@ class MyClientCallback : public BLEClientCallbacks {
   void onDisconnect(BLEClient* pclient) {
     connected = false;
     Serial.println("onDisconnect");
+    BLEDevice::getScan()->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
   }
 };
 
@@ -146,12 +154,17 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
  /**
    * Called for each advertising BLE server.
    */
+
   void onResult(BLEAdvertisedDevice advertisedDevice) {
+#ifdef PRINT_ALL_DEVICES
     Serial.print("BLE Advertised Device found: ");
     Serial.println(advertisedDevice.toString().c_str());
+#endif
 
-    // We have found a device, let us now see if it contains the service we are looking for.
-    if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
+    // We have found a device, let's see if it's the device name we're looking for
+    if( strDeviceNames[ u8SensorIdx % MAX_NUMBER_OF_SENSORS ] == advertisedDevice.getName() )
+    {
+    //if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
 
       BLEDevice::getScan()->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
@@ -162,6 +175,13 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   } // onResult
 }; // MyAdvertisedDeviceCallbacks
 
+void scanCompleteCB(BLEScanResults scanResults) 
+{
+    Serial.print("Timeout scanning for device ");
+    Serial.println( ( u8SensorIdx % MAX_NUMBER_OF_SENSORS ), DEC );
+    u8SensorIdx++;
+    BLEDevice::getScan()->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
+}
 
 void setup() {
   Serial.begin( 115200 );
@@ -178,7 +198,9 @@ void setup() {
   pBLEScan->setInterval(1349);
   pBLEScan->setWindow(449);
   pBLEScan->setActiveScan(true);
-  pBLEScan->start(5, false);
+  pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
+
+  u8SensorIdx = 1;
 } // End of setup.
 
 
@@ -205,7 +227,9 @@ void loop() {
       // Read the value of the characteristic.
     if(pRemoteCapCharacteristic->canRead()) {
       uint16_t u16CapValue = pRemoteCapCharacteristic->readUInt16();
-      Serial.print("The capacitance characteristic value was: ");
+      Serial.print("Sensor ");
+      Serial.print( u8SensorIdx % MAX_NUMBER_OF_SENSORS ); 
+      Serial.print(" capacitance = ");
       Serial.println( u16CapValue, DEC );
 
       u8TxBuf[0] = 0; // sensor number, 0 for now
@@ -216,11 +240,13 @@ void loop() {
       FRDMSerialComm.write( u8TxBuf, 8 );
     }
 
-    delay(250);
+    delay(100);
 
     if(pRemoteTempCharacteristic->canRead()) {
       float fTempValue = pRemoteTempCharacteristic->readFloat();
-      Serial.print( "The temperature characteristic value was: " );
+      Serial.print("Sensor ");
+      Serial.print( u8SensorIdx % MAX_NUMBER_OF_SENSORS ); 
+      Serial.print(" temperature = ");
       Serial.println( fTempValue );
       
       u8TxBuf[0] = 0; // sensor number, 0 for now
@@ -228,11 +254,15 @@ void loop() {
       u8TxBuf[2] = ( (int8_t)fTempValue );
 
       FRDMSerialComm.write( u8TxBuf, 8 );
-      
     }
-  }else if(doScan){
-    BLEDevice::getScan()->start(0);  // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
-  }
+
+    // got the data from this sensor, now disconnect and start scanning for other sensors
+    u8SensorIdx++;
+    pClient->disconnect();
+
+  }//else if(doScan){
+  //  BLEDevice::getScan()->start(0);   // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
+  //}
   
   delay(1000); // Delay a second between loops.
 } // End of loop

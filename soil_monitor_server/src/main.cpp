@@ -10,12 +10,15 @@
 #define CAPACITANCE_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define TEMPERATURE_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
+#define DEVICE_NAME "Soil Sensor 2"
+
 Adafruit_seesaw ss;
 
 BLEServer* pServer = NULL;
 BLECharacteristic* pCapCharacteristic = NULL;
 BLECharacteristic* pTempCharacteristic = NULL;
 
+static bool boRestartAdvertising = false;;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 uint32_t value = 0;
@@ -26,7 +29,9 @@ class MyServerCallbacks: public BLEServerCallbacks {
     };
 
     void onDisconnect(BLEServer* pServer) {
+      Serial.println("disconnect callback");
       deviceConnected = false;
+      boRestartAdvertising = true;
     }
 };
 
@@ -45,7 +50,7 @@ void setup() {
   }
 
   // Create the BLE Device
-  BLEDevice::init("Soil Sensor 1");
+  BLEDevice::init( DEVICE_NAME );
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
@@ -96,17 +101,14 @@ void loop() {
       delay(1000);
   }
   // disconnecting
-  if (!deviceConnected && oldDeviceConnected) {
+  if ( boRestartAdvertising == true ) {
       delay(500); // give the bluetooth stack the chance to get things ready
       pServer->startAdvertising(); // restart advertising
-      Serial.println("start advertising");
+      Serial.println("restart advertising");
       oldDeviceConnected = deviceConnected;
+      boRestartAdvertising = false;
   }
   // connecting
-  if (deviceConnected && !oldDeviceConnected) {
-      // do stuff here on connecting
-      oldDeviceConnected = deviceConnected;
-  }
   
   delay(100);
 }
