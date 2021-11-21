@@ -216,6 +216,8 @@ void loop() {
       FRDMSerialComm.write( u8TxBuf, 8 );
     }
 
+    delay(250);
+
     if(pRemoteTempCharacteristic->canRead()) {
       float fTempValue = pRemoteTempCharacteristic->readFloat();
       Serial.print( "The temperature characteristic value was: " );
