@@ -191,6 +191,7 @@ void scanCompleteCB(BLEScanResults scanResults)
     Serial.print("Timeout scanning for device ");
     Serial.println( ( u8SensorIdx % MAX_NUMBER_OF_SENSORS ), DEC );
     u8SensorIdx++;
+    delay(1000);
     pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
 }
 
@@ -231,6 +232,7 @@ void loop() {
     } else {
       Serial.println("We have failed to connect to the server; restart scanning");
       u8SensorIdx++;
+      delay(1000);
       pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
     }
     doConnect = false;
@@ -256,7 +258,7 @@ void loop() {
       FRDMSerialComm.write( u8TxBuf, 8 );
     }
 
-    delay(100);
+    delay(250);
 
     if(pRemoteTempCharacteristic->canRead()) {
       float fTempValue = pRemoteTempCharacteristic->readFloat();
