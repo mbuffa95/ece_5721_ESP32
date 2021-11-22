@@ -54,12 +54,14 @@ static BLEUUID tempCharUUID("beb5483e-36e1-4688-b7f5-ea07361b26a9"); // temperat
 static boolean doConnect = false;
 static boolean connected = false;
 static boolean doScan = false;
-static BLEClient*  pClient;
+static BLEClient* pClient;
 static BLERemoteCharacteristic* pRemoteCapCharacteristic;
 static BLERemoteCharacteristic* pRemoteTempCharacteristic;
 static BLEAdvertisedDevice* myDevice;
 static const std::string strDeviceNames[2] = {"Soil Sensor 1", "Soil Sensor 2"};
 static uint8_t u8SensorIdx;
+static BLERemoteService* pRemoteService;
+static BLEScan* pBLEScan;
 
 static void scanCompleteCB(BLEScanResults scanResults) ;
 
@@ -78,12 +80,15 @@ static void notifyCallback(
 
 class MyClientCallback : public BLEClientCallbacks {
   void onConnect(BLEClient* pclient) {
+    connected = true;
+    Serial.println(" - Connected to server");
   }
 
   void onDisconnect(BLEClient* pclient) {
     connected = false;
     Serial.println("onDisconnect");
-    BLEDevice::getScan()->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
+    delay(1000);
+    pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
   }
 };
 
@@ -91,19 +96,19 @@ bool connectToServer() {
     Serial.print("Forming a connection to ");
     Serial.println(myDevice->getAddress().toString().c_str());
     
-    pClient = BLEDevice::createClient();
-    Serial.println(" - Created client");
+    // pClient = BLEDevice::createClient();
+    // Serial.println(" - Created client");
 
-    pClient->setClientCallbacks(new MyClientCallback());
+    // pClient->setClientCallbacks(new MyClientCallback());
 
     // Connect to the remote BLE Server.
     pClient->connect(myDevice);  // if you pass BLEAdvertisedDevice instead of address, it will be recognized type of peer device address (public or private)
-    Serial.println(" - Connected to server");
 
     // Obtain a reference to the service we are after in the remote BLE server.
     //Serial.println(pClient->getServices());
     
-    BLERemoteService* pRemoteService = pClient->getService(serviceUUID);
+    pRemoteService = pClient->getService(serviceUUID);
+
     if (pRemoteService == nullptr) {
       Serial.print("Failed to find our service UUID: ");
       Serial.println(serviceUUID.toString().c_str());
@@ -123,10 +128,10 @@ bool connectToServer() {
       return false;
     }
     
-    if(pRemoteCapCharacteristic->canNotify())
-    {
-      pRemoteCapCharacteristic->registerForNotify(notifyCallback);
-    }
+    // if(pRemoteCapCharacteristic->canNotify())
+    // {
+    //   pRemoteCapCharacteristic->registerForNotify(notifyCallback);
+    // }
 
     pRemoteTempCharacteristic = pRemoteService->getCharacteristic(tempCharUUID);
 
@@ -137,14 +142,13 @@ bool connectToServer() {
       return false;
     }
     
-    if(pRemoteTempCharacteristic->canNotify())
-    {
-      pRemoteTempCharacteristic->registerForNotify(notifyCallback);
-    }
+    // if(pRemoteTempCharacteristic->canNotify())
+    // {
+    //   pRemoteTempCharacteristic->registerForNotify(notifyCallback);
+    // }
 
     Serial.println(" - Found our characteristics");
 
-    connected = true;
     return true;
 }
 /**
@@ -166,7 +170,8 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     {
     //if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
 
-      BLEDevice::getScan()->stop();
+      pBLEScan->stop();
+      free(myDevice);
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
       doConnect = true;
       doScan = true;
@@ -180,7 +185,7 @@ void scanCompleteCB(BLEScanResults scanResults)
     Serial.print("Timeout scanning for device ");
     Serial.println( ( u8SensorIdx % MAX_NUMBER_OF_SENSORS ), DEC );
     u8SensorIdx++;
-    BLEDevice::getScan()->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
+    pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
 }
 
 void setup() {
@@ -193,12 +198,15 @@ void setup() {
   // Retrieve a Scanner and set the callback we want to use to be informed when we
   // have detected a new device.  Specify that we want active scanning and start the
   // scan to run for 5 seconds.
-  BLEScan* pBLEScan = BLEDevice::getScan();
+  pBLEScan = BLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   pBLEScan->setInterval(1349);
   pBLEScan->setWindow(449);
   pBLEScan->setActiveScan(true);
   pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
+
+  pClient = BLEDevice::createClient();
+  pClient->setClientCallbacks(new MyClientCallback());
 
   u8SensorIdx = 1;
 } // End of setup.
@@ -232,7 +240,7 @@ void loop() {
       Serial.print(" capacitance = ");
       Serial.println( u16CapValue, DEC );
 
-      u8TxBuf[0] = 0; // sensor number, 0 for now
+      u8TxBuf[0] = ( u8SensorIdx % MAX_NUMBER_OF_SENSORS );
       u8TxBuf[1] = eSENSOR_VALUE_CAPACITANCE;
       u8TxBuf[2] = ( ( u16CapValue & 0xFF00 ) >> 8 );
       u8TxBuf[3] = ( uint8_t( u16CapValue & 0x00FF ) );
@@ -249,7 +257,7 @@ void loop() {
       Serial.print(" temperature = ");
       Serial.println( fTempValue );
       
-      u8TxBuf[0] = 0; // sensor number, 0 for now
+      u8TxBuf[0] = ( u8SensorIdx % MAX_NUMBER_OF_SENSORS );
       u8TxBuf[1] = eSENSOR_VALUE_TEMPERATURE;
       u8TxBuf[2] = ( (int8_t)fTempValue );
 
@@ -263,6 +271,6 @@ void loop() {
   }//else if(doScan){
   //  BLEDevice::getScan()->start(0);   // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
   //}
-  
+  Serial.println( "He's still alive");
   delay(1000); // Delay a second between loops.
 } // End of loop
