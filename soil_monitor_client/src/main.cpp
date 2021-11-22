@@ -54,12 +54,14 @@ static BLEUUID tempCharUUID("beb5483e-36e1-4688-b7f5-ea07361b26a9"); // temperat
 static boolean doConnect = false;
 static boolean connected = false;
 static boolean doScan = false;
+
+static const std::string strDeviceNames[2] = {"Soil Sensor 1", "Soil Sensor 2"};
+static uint8_t u8SensorIdx;
+
 static BLEClient* pClient;
 static BLERemoteCharacteristic* pRemoteCapCharacteristic;
 static BLERemoteCharacteristic* pRemoteTempCharacteristic;
 static BLEAdvertisedDevice* myDevice;
-static const std::string strDeviceNames[2] = {"Soil Sensor 1", "Soil Sensor 2"};
-static uint8_t u8SensorIdx;
 static BLERemoteService* pRemoteService;
 static BLEScan* pBLEScan;
 
@@ -102,8 +104,12 @@ bool connectToServer() {
     // pClient->setClientCallbacks(new MyClientCallback());
 
     // Connect to the remote BLE Server.
-    pClient->connect(myDevice);  // if you pass BLEAdvertisedDevice instead of address, it will be recognized type of peer device address (public or private)
-
+    if( false == pClient->connect(myDevice) )  // if you pass BLEAdvertisedDevice instead of address, it will be recognized type of peer device address (public or private)
+    {
+      Serial.print("Failed to connect to  ");
+      Serial.println( ( u8SensorIdx % MAX_NUMBER_OF_SENSORS ), DEC );
+      return false;
+    }
     // Obtain a reference to the service we are after in the remote BLE server.
     //Serial.println(pClient->getServices());
     
@@ -223,7 +229,9 @@ void loop() {
     if (connectToServer()) {
       Serial.println("We are now connected to the BLE Server.");
     } else {
-      Serial.println("We have failed to connect to the server; there is nothin more we will do.");
+      Serial.println("We have failed to connect to the server; restart scanning");
+      u8SensorIdx++;
+      pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
     }
     doConnect = false;
   }
