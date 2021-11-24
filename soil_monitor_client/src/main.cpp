@@ -106,9 +106,13 @@ bool connectToServer() {
     // Connect to the remote BLE Server.
     if( false == pClient->connect(myDevice) )  // if you pass BLEAdvertisedDevice instead of address, it will be recognized type of peer device address (public or private)
     {
-      Serial.print("Failed to connect to  ");
+      Serial.print("Failed to connect to ");
       Serial.println( ( u8SensorIdx % MAX_NUMBER_OF_SENSORS ), DEC );
       return false;
+    }
+    else
+    {
+      Serial.print("Connect returned OK");
     }
     // Obtain a reference to the service we are after in the remote BLE server.
     //Serial.println(pClient->getServices());
