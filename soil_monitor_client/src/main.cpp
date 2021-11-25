@@ -11,6 +11,7 @@
 //#include "BLEScan.h"
 
 #include <HardwareSerial.h>
+#include <esp_task_wdt.h>
 
 #define FRDM_SERIAL_TX_PIN ( 17 )
 #define FRDM_SERIAL_RX_PIN ( 16 )
@@ -18,7 +19,9 @@
 #define FRDM_SERIAL_BAUD ( 4800 )
 #define MAX_NUMBER_OF_SENSORS ( 2 )
 
-#define SENSOR_TIMEOUT_S ( 5 )
+#define SENSOR_TIMEOUT_S ( 3 )
+#define WDT_TIMEOUT 4
+
 
 //#define PRINT_ALL_DEVICES
 
@@ -49,7 +52,6 @@ static HardwareSerial FRDMSerialComm(1); // use UART 2,
 static BLEUUID serviceUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
 // The characteristic of the remote service we are interested in.
 static BLEUUID capCharUUID("beb5483e-36e1-4688-b7f5-ea07361b26a8"); // capacitance
-static BLEUUID tempCharUUID("beb5483e-36e1-4688-b7f5-ea07361b26a9"); // temperature
 
 static boolean doConnect = false;
 static boolean connected = false;
@@ -60,7 +62,6 @@ static uint8_t u8SensorIdx;
 
 static BLEClient* pClient;
 static BLERemoteCharacteristic* pRemoteCapCharacteristic;
-static BLERemoteCharacteristic* pRemoteTempCharacteristic;
 static BLEAdvertisedDevice* myDevice;
 static BLERemoteService* pRemoteService;
 static BLEScan* pBLEScan;
@@ -89,6 +90,7 @@ class MyClientCallback : public BLEClientCallbacks {
   void onDisconnect(BLEClient* pclient) {
     connected = false;
     Serial.println("onDisconnect");
+    esp_task_wdt_reset();
     delay(1000);
     pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
   }
@@ -143,20 +145,6 @@ bool connectToServer() {
     //   pRemoteCapCharacteristic->registerForNotify(notifyCallback);
     // }
 
-    pRemoteTempCharacteristic = pRemoteService->getCharacteristic(tempCharUUID);
-
-    if (pRemoteTempCharacteristic == nullptr) {
-      Serial.print("Failed to find temperature characteristic UUID: ");
-      Serial.println(tempCharUUID.toString().c_str());
-      pClient->disconnect();
-      return false;
-    }
-    
-    // if(pRemoteTempCharacteristic->canNotify())
-    // {
-    //   pRemoteTempCharacteristic->registerForNotify(notifyCallback);
-    // }
-
     Serial.println(" - Found our characteristics");
 
     return true;
@@ -195,11 +183,15 @@ void scanCompleteCB(BLEScanResults scanResults)
     Serial.print("Timeout scanning for device ");
     Serial.println( ( u8SensorIdx % MAX_NUMBER_OF_SENSORS ), DEC );
     u8SensorIdx++;
+    esp_task_wdt_reset();
     delay(1000);
     pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
 }
 
 void setup() {
+  esp_task_wdt_init(WDT_TIMEOUT, true); //enable panic so ESP32 restarts
+  esp_task_wdt_add(NULL); //add current thread to WDT watch
+
   Serial.begin( 115200 );
   FRDMSerialComm.begin( FRDM_SERIAL_BAUD, FRDM_SERIAL_MODE, FRDM_SERIAL_RX_PIN, FRDM_SERIAL_TX_PIN );
 
@@ -236,6 +228,7 @@ void loop() {
     } else {
       Serial.println("We have failed to connect to the server; restart scanning");
       u8SensorIdx++;
+      esp_task_wdt_reset();
       delay(1000);
       pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
     }
@@ -262,22 +255,6 @@ void loop() {
       FRDMSerialComm.write( u8TxBuf, 8 );
     }
 
-    delay(250);
-
-    if(pRemoteTempCharacteristic->canRead()) {
-      float fTempValue = pRemoteTempCharacteristic->readFloat();
-      Serial.print("Sensor ");
-      Serial.print( u8SensorIdx % MAX_NUMBER_OF_SENSORS ); 
-      Serial.print(" temperature = ");
-      Serial.println( fTempValue );
-      
-      u8TxBuf[0] = ( u8SensorIdx % MAX_NUMBER_OF_SENSORS );
-      u8TxBuf[1] = eSENSOR_VALUE_TEMPERATURE;
-      u8TxBuf[2] = ( (int8_t)fTempValue );
-
-      FRDMSerialComm.write( u8TxBuf, 8 );
-    }
-
     // got the data from this sensor, now disconnect and start scanning for other sensors
     u8SensorIdx++;
     pClient->disconnect();
@@ -285,6 +262,7 @@ void loop() {
   }//else if(doScan){
   //  BLEDevice::getScan()->start(0);   // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
   //}
-  Serial.println( "He's still alive");
-  delay(1000); // Delay a second between loops.
+  esp_task_wdt_reset();
+  Serial.print(".");
+  delay(1000); // Delay a half second between loops.
 } // End of loop
