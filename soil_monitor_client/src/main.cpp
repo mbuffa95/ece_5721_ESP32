@@ -21,7 +21,7 @@
 #define FRDM_SERIAL_BAUD ( 4800 )
 #define MAX_NUMBER_OF_SENSORS ( 2 )
 
-#define SENSOR_TIMEOUT_S ( 5 )
+#define SENSOR_TIMEOUT_S ( 2 )
 #define WDT_TIMEOUT 6
 
 
