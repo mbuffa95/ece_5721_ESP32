@@ -1,5 +1,5 @@
 #include <Arduino.h>
-
+#include "math.h"
 /**
  * A BLE client example that is rich in capabilities.
  * There is a lot new capabilities implemented.
@@ -12,6 +12,8 @@
 
 #include <HardwareSerial.h>
 #include <esp_task_wdt.h>
+#include <string>  
+#include <stdint.h>
 
 #define FRDM_SERIAL_TX_PIN ( 17 )
 #define FRDM_SERIAL_RX_PIN ( 16 )
@@ -19,8 +21,8 @@
 #define FRDM_SERIAL_BAUD ( 4800 )
 #define MAX_NUMBER_OF_SENSORS ( 2 )
 
-#define SENSOR_TIMEOUT_S ( 3 )
-#define WDT_TIMEOUT 4
+#define SENSOR_TIMEOUT_S ( 2 )
+#define WDT_TIMEOUT 6
 
 
 //#define PRINT_ALL_DEVICES
@@ -34,39 +36,40 @@ typedef enum eSensorValueType
   eSENSOR_VALUE_COUNT,
 }eSENSOR_VALUE_TYPE;
 
-typedef struct xSensorReadingPacket
+typedef struct xSensorData
 {
-  uint8_t u8SensorID;
-  eSENSOR_VALUE_TYPE eValueType;
-  union
+  const std::string strDevName;
+  uint16_t u16Capacitance;
+  bool boIsNewData;
+}xSENSOR_DATA;
+
+static xSENSOR_DATA xSensorData[MAX_NUMBER_OF_SENSORS] =
+{
   {
-    uint16_t u16Capacitance;
-    int8_t s8Temperature;
-  };
-}xSENSOR_READING_PACKET;
+    "Soil Sensor 1",
+    0,
+    false,
+  },
+    {
+    "Soil Sensor 2",
+    0,
+    false,
+  }
+};
 
 
 static HardwareSerial FRDMSerialComm(1); // use UART 2, 
 
-// The remote service we wish to connect to.
-static BLEUUID serviceUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
-// The characteristic of the remote service we are interested in.
-static BLEUUID capCharUUID("beb5483e-36e1-4688-b7f5-ea07361b26a8"); // capacitance
-
-static boolean doConnect = false;
-static boolean connected = false;
 static boolean doScan = false;
-
-static const std::string strDeviceNames[2] = {"Soil Sensor 1", "Soil Sensor 2"};
 static uint8_t u8SensorIdx;
 
-static BLEClient* pClient;
-static BLERemoteCharacteristic* pRemoteCapCharacteristic;
 static BLEAdvertisedDevice* myDevice;
-static BLERemoteService* pRemoteService;
 static BLEScan* pBLEScan;
+static const char * pCharAdvData;
 
-static void scanCompleteCB(BLEScanResults scanResults) ;
+//static xSENSOR_READING_PACKET
+
+static void scanCompleteCB(BLEScanResults scanResults);
 
 static void notifyCallback(
   BLERemoteCharacteristic* pBLERemoteCharacteristic,
@@ -81,74 +84,6 @@ static void notifyCallback(
     Serial.println((char*)pData);
 }
 
-class MyClientCallback : public BLEClientCallbacks {
-  void onConnect(BLEClient* pclient) {
-    connected = true;
-    Serial.println(" - Connected to server");
-  }
-
-  void onDisconnect(BLEClient* pclient) {
-    connected = false;
-    Serial.println("onDisconnect");
-    esp_task_wdt_reset();
-    delay(1000);
-    pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
-  }
-};
-
-bool connectToServer() {
-    Serial.print("Forming a connection to ");
-    Serial.println(myDevice->getAddress().toString().c_str());
-    
-    // pClient = BLEDevice::createClient();
-    // Serial.println(" - Created client");
-
-    // pClient->setClientCallbacks(new MyClientCallback());
-
-    // Connect to the remote BLE Server.
-    if( false == pClient->connect(myDevice) )  // if you pass BLEAdvertisedDevice instead of address, it will be recognized type of peer device address (public or private)
-    {
-      Serial.print("Failed to connect to ");
-      Serial.println( ( u8SensorIdx % MAX_NUMBER_OF_SENSORS ), DEC );
-      return false;
-    }
-    else
-    {
-      Serial.print("Connect returned OK");
-    }
-    // Obtain a reference to the service we are after in the remote BLE server.
-    //Serial.println(pClient->getServices());
-    
-    pRemoteService = pClient->getService(serviceUUID);
-
-    if (pRemoteService == nullptr) {
-      Serial.print("Failed to find our service UUID: ");
-      Serial.println(serviceUUID.toString().c_str());
-      pClient->disconnect();
-      return false;
-    }
-
-    Serial.println(" - Found our service");
-
-    // Obtain a reference to the characteristic in the service of the remote BLE server.
-    pRemoteCapCharacteristic = pRemoteService->getCharacteristic(capCharUUID);
-
-    if (pRemoteCapCharacteristic == nullptr) {
-      Serial.print("Failed to find capacitance characteristic UUID: ");
-      Serial.println(capCharUUID.toString().c_str());
-      pClient->disconnect();
-      return false;
-    }
-    
-    // if(pRemoteCapCharacteristic->canNotify())
-    // {
-    //   pRemoteCapCharacteristic->registerForNotify(notifyCallback);
-    // }
-
-    Serial.println(" - Found our characteristics");
-
-    return true;
-}
 /**
  * Scan for BLE servers and find the first one that advertises the service we are looking for.
  */
@@ -158,34 +93,56 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
    */
 
   void onResult(BLEAdvertisedDevice advertisedDevice) {
+    int i = 0;
+    uint16_t u16CapVal = 0;
+
 #ifdef PRINT_ALL_DEVICES
     Serial.print("BLE Advertised Device found: ");
     Serial.println(advertisedDevice.toString().c_str());
 #endif
 
     // We have found a device, let's see if it's the device name we're looking for
-    if( strDeviceNames[ u8SensorIdx % MAX_NUMBER_OF_SENSORS ] == advertisedDevice.getName() )
+    if( xSensorData[ u8SensorIdx % MAX_NUMBER_OF_SENSORS ].strDevName == advertisedDevice.getName() )
     {
-    //if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
+      xSensorData[u8SensorIdx % MAX_NUMBER_OF_SENSORS].u16Capacitance = 0;
+      pCharAdvData = advertisedDevice.getManufacturerData().data(); // why is our data prepended with other data?
 
+      Serial.print("Sensor ");
+      Serial.print( u8SensorIdx % MAX_NUMBER_OF_SENSORS ); 
+      Serial.print( ": " ); 
+
+      pCharAdvData += 2;
+
+      while( *pCharAdvData != 0x00 )
+      {
+        // loop until finding null character
+        // Serial.print("raw byte: ");
+        // Serial.println( *pCharAdvData, HEX ); 
+        //Serial.println( *pCharAdvData - 0x30, HEX);
+        
+        u16CapVal = (u16CapVal * 10) + (*pCharAdvData - 0x30);
+        // Serial.print("converted so far: ");
+        // Serial.println(u16CapVal);
+        pCharAdvData++;
+      }
+
+      xSensorData[u8SensorIdx % MAX_NUMBER_OF_SENSORS].u16Capacitance = u16CapVal;
+      xSensorData[u8SensorIdx % MAX_NUMBER_OF_SENSORS].boIsNewData = true;
+
+      Serial.println(xSensorData[u8SensorIdx % MAX_NUMBER_OF_SENSORS].u16Capacitance);
       pBLEScan->stop();
-      free(myDevice);
-      myDevice = new BLEAdvertisedDevice(advertisedDevice);
-      doConnect = true;
       doScan = true;
 
-    } // Found our server
-  } // onResult
-}; // MyAdvertisedDeviceCallbacks
+      xSensorData[u8SensorIdx % MAX_NUMBER_OF_SENSORS].boIsNewData = true;
+    }
+  }
+};
 
 void scanCompleteCB(BLEScanResults scanResults) 
 {
-    Serial.print("Timeout scanning for device ");
+    Serial.print("Timed out looking for sensor ");
     Serial.println( ( u8SensorIdx % MAX_NUMBER_OF_SENSORS ), DEC );
-    u8SensorIdx++;
-    esp_task_wdt_reset();
-    delay(1000);
-    pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
+    doScan = true;
 }
 
 void setup() {
@@ -208,9 +165,6 @@ void setup() {
   pBLEScan->setActiveScan(true);
   pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
 
-  pClient = BLEDevice::createClient();
-  pClient->setClientCallbacks(new MyClientCallback());
-
   u8SensorIdx = 1;
 } // End of setup.
 
@@ -218,51 +172,31 @@ void setup() {
 // This is the Arduino main loop function.
 void loop() {
   uint8_t u8TxBuf[8];
+  int i;
 
-  // If the flag "doConnect" is true then we have scanned for and found the desired
-  // BLE Server with which we wish to connect.  Now we connect to it.  Once we are 
-  // connected we set the connected flag to be true.
-  if (doConnect == true) {
-    if (connectToServer()) {
-      Serial.println("We are now connected to the BLE Server.");
-    } else {
-      Serial.println("We have failed to connect to the server; restart scanning");
-      u8SensorIdx++;
-      esp_task_wdt_reset();
-      delay(1000);
-      pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
-    }
-    doConnect = false;
-  }
-
-  // If we are connected to a peer BLE Server, update the characteristic each time we are reached
-  // with the current time since boot.
-  if (connected) {
-
-      // Read the value of the characteristic.
-    if(pRemoteCapCharacteristic->canRead()) {
-      uint16_t u16CapValue = pRemoteCapCharacteristic->readUInt16();
-      Serial.print("Sensor ");
-      Serial.print( u8SensorIdx % MAX_NUMBER_OF_SENSORS ); 
-      Serial.print(" capacitance = ");
-      Serial.println( u16CapValue, DEC );
-
+  for( i = 0; i < MAX_NUMBER_OF_SENSORS; i++ )
+  {
+    if( xSensorData[i].boIsNewData == true )
+    {
       u8TxBuf[0] = ( u8SensorIdx % MAX_NUMBER_OF_SENSORS );
       u8TxBuf[1] = eSENSOR_VALUE_CAPACITANCE;
-      u8TxBuf[2] = ( ( u16CapValue & 0xFF00 ) >> 8 );
-      u8TxBuf[3] = ( uint8_t( u16CapValue & 0x00FF ) );
+      u8TxBuf[2] = ( ( xSensorData[i].u16Capacitance & 0xFF00 ) >> 8 );
+      u8TxBuf[3] = ( uint8_t( xSensorData[i].u16Capacitance & 0x00FF ) );
 
       FRDMSerialComm.write( u8TxBuf, 8 );
+
+      xSensorData[i].boIsNewData = false;
     }
+  }
 
-    // got the data from this sensor, now disconnect and start scanning for other sensors
+  if( doScan == true )
+  {
     u8SensorIdx++;
-    pClient->disconnect();
+    esp_task_wdt_reset();
+    pBLEScan->start(SENSOR_TIMEOUT_S, &scanCompleteCB, false);
+  }
 
-  }//else if(doScan){
-  //  BLEDevice::getScan()->start(0);   // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
-  //}
   esp_task_wdt_reset();
   Serial.print(".");
-  delay(1000); // Delay a half second between loops.
+  delay(100); // Delay a half second between loops.
 } // End of loop
